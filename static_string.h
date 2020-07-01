@@ -4,6 +4,7 @@
 #include <string>
 #include <iomanip>
 #include <cstdio>
+#include "/usr/local/cuda-11.0/targets/x86_64-linux/include/cuda_runtime.h"
 
 
 template <std::size_t N> struct my_static_string {

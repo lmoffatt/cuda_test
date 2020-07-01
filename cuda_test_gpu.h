@@ -2,7 +2,6 @@
 #define CUDA_TEST_GPU_H
 #include "cuda_test_functions.h"
 // CUDA runtime
-#include "cuda_runtime.h"
 #include "cuda_test_transporter.h"
 // helper functions and utilities to work with CUDA
 //#include <helper_cuda.h>
