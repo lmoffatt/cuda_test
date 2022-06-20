@@ -2,7 +2,6 @@
 #define CUDA_TEST_TRANSPORTER_H
 
 #include "cuda_test_functions.h"
-#include "cuda_runtime.h"
 
 template<class T>
 class send_internal_pointer_to_device

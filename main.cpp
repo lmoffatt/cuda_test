@@ -3,6 +3,8 @@
 #include "cuda_test_functions.h"
 #include "cuda_test_cpu.h"
 #include "cuda_test_gpu.h"
+#include "cuda_test_compile.h"
+//#include "cuda_test_instantiate.h"
 
 struct num
 {
@@ -11,6 +13,13 @@ struct num
   static   constexpr auto my_name(){return name;}
 
 };
+struct myindex
+{
+  inline static  constexpr auto is_identifier=true;
+  inline static   constexpr auto name=my_static_string("myindex");
+  static   constexpr auto my_name(){return name;}
+};
+
 struct t
 {
   inline static  constexpr auto is_identifier=true;
@@ -54,6 +63,8 @@ template<class Id> struct myfun{
   static   constexpr auto my_name(){return name;}
 };
 
+
+
 //template __global__ void executer2<global_gpu>();
 
 
@@ -62,9 +73,18 @@ template<class Id> struct myfun{
 int main()
 {
   constexpr auto d=mapu(x_i(foo{},2ul),x_i(bar{},1),x_i(max_i<num>{},100),x_i(delta_i<t>{},0.1));
+
+
   auto q=quimulun{
-      F(t{},index(max_i<num>{})*delta_i<t>{})
-          ,
+      F(myindex{},index(max_i<num>{})),
+      F(t{},myindex{}*delta_i<t>{}),
+      F(myfun<foo>{},foo{}*t{}),
+      F(myfun<bar>{},myfun<foo>{}+bar{})};
+
+
+  auto q_new=quimulun{
+      I_new(myindex{},max_i<num>{}),
+      F(t{},myindex{}*delta_i<t>{}),
       F(myfun<foo>{},foo{}*t{}),
       F(myfun<bar>{},myfun<foo>{}+bar{})};
 
@@ -77,6 +97,10 @@ int main()
  // executer2<global_gpu><<<1,1>>>();
   //exe3<<<1,100>>>();
 
+ // auto ci=instantiate(Op(Eval{},q_new),d);
+
+  auto c=compile(gpu{},Op(Eval{},q),Data(d));
+  std::cerr<<c.name.str()<<"\n";
   auto e=execute(serial_cpu{},Op(Eval{},q),d);
   std::cout<<e;
   //  std::cout<<out_type::size()<<"\n";

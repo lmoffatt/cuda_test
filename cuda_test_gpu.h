@@ -7,16 +7,6 @@
 //#include <helper_cuda.h>
 //#include <helper_functions.h>
 
-struct global_gpu{
-  inline static constexpr auto num_threads=100;
-
-
-};
-struct device_gpu{
- // __device__ __host__
-  device_gpu()=default;
-};
-struct gpu{};
 
 template< class Id,class...Xs,typename=std::enable_if_t<!is_any_of_these_template_classes<Op,quimulun,F>::template value<Id>> >
 __device__ __host__ decltype(auto) execute( device_gpu,Op<Eval,Id>, Xs&&...x)

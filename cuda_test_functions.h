@@ -9,6 +9,16 @@
 #include <vector>
 #include <cstdio>
 
+template<class... Xs>
+struct Data{
+  Data(Xs...){}
+  Data()=default;
+};
+
+
+
+
+
 __host__ __device__
     void my_print(double x){ printf("%g",x);}
 
@@ -46,6 +56,8 @@ struct is_any_of_these_template_classes
 };
 
 
+
+
 template<class T>
 class vector_device
 {
@@ -64,13 +76,13 @@ public:
       auto& begin(){return v_;}
 
   __host__ __device__
-      auto const begin()const {return v_;}
+      auto  begin()const {return v_;}
 
   __host__ __device__
       auto end(){return v_+n_;}
 
   __host__ __device__
-      auto const  end()const {return v_+n_;}
+      auto   end()const {return v_+n_;}
 
   __host__ __device__
   vector_device(const vector_device& other):v_{new T[other.size()]},n_{other.size()}
@@ -432,6 +444,11 @@ template <class Id, class... Ids> struct Position<Id,Ids...>:Position<Id>,Positi
   __host__ __device__
   Position (const aPosition& p):Position<Id>{p},Position<Ids>{p}...{}
 
+
+  template<typename... sizes, typename=std::enable_if_t<(std::is_same_v<sizes,std::size_t >&&...)&&sizeof... (sizes)==sizeof... (Ids)>>
+  __host__ __device__
+  Position (std::size_t i, sizes...is):Position<Id>{i},Position<Ids>{is}...{}
+
   Position()=default;
 
   template<class ...Xs>
@@ -462,7 +479,106 @@ template <class Id, class... Ids> struct Position<Id,Ids...>:Position<Id>,Positi
   }
 
 };
+template<class... > class offset;
 
+
+
+template<class Id>
+struct Address
+{
+};
+
+template<class, class >
+struct Element;
+
+template<class Id, class ...Idx >
+struct Element<Id,Position<Idx...>>
+{
+};
+
+
+
+template<class... >
+class ind;
+
+template<> class ind<>
+{
+public:
+  inline static constexpr auto name=my_static_string("index()");
+};
+
+
+
+template<class Id>
+class ind<Id>
+{
+private:
+    std::size_t n_;
+public:
+
+  inline static constexpr auto ind_name=my_static_string("index(");
+
+  inline static constexpr auto name=ind_name+Id::name+my_static_string(")");
+
+  __host__ __device__
+     constexpr ind(Id, std::size_t n):n_{n}{}
+
+  constexpr ind()=default;
+    __host__ __device__
+      constexpr auto size() {return n_;}
+
+     template<class Pos>
+      __host__ __device__
+      constexpr auto operator()(const Pos& p)const {
+        return std::pair<offset<Id>, const Pos&>(p[Id{}](),p);
+      }
+
+      template<class... Id0,class Pos>
+      __host__ __device__
+          constexpr auto operator()(std::pair<offset<Id0...>, const Pos&> p)const
+      {
+         return std::pair<offset<Id0...,Id>, const Pos&>(
+            p.first()*size()+ p.second[Id{}](),
+            p.second);
+      }
+
+
+};
+
+template<class... Id>
+class offset
+{
+private:
+  std::size_t n_;
+
+public:
+  __host__ __device__
+      constexpr offset(std::size_t n):n_{n}{}
+  __host__ __device__
+      constexpr auto operator()()const {return n_;}
+  template<class... Id1>
+  __host__ __device__
+      friend constexpr offset<Id...,Id1...> operator*(offset one,offset<Id1...> two) {return one()*two();}
+};
+
+
+template<class>
+struct index_offset;
+
+template<class T>
+using index_offset_t=typename index_offset<T>::type;
+
+template<class Id>
+struct index_offset<ind<Id>>
+{
+  using type=offset<Id>;
+};
+
+template<class Id, class... index_types>
+struct index_offset<ind<ind<index_types...>,Id>>
+{
+  using type=decltype((index_offset_t<index_types>{}*...*offset<Id>{}));
+};
 
 
 
@@ -534,6 +650,175 @@ public:
 };
 
 
+
+
+template<class Value_type,class Index> class vector_by_index ;
+
+template<class X>
+auto compose(X&& x)
+{
+  return x;
+}
+
+
+template<class X, class F, class... G>
+auto compose(X&& x, const F& f, const G&...g )
+{
+  return compose(f(std::forward<X>(x)),g...);
+}
+
+
+
+
+template<class Value_type,class indice_type>
+class vector_by_index
+{
+public:
+  typedef Value_type element_type;
+
+  typedef vector_device<element_type> value_type;
+
+
+private:
+  indice_type i_;
+  value_type value_;
+
+public:
+
+
+
+  __host__ __device__
+      explicit vector_by_index(Data<Value_type>,const indice_type& i):i_{i},value_{i.size()}{}
+
+  __host__ __device__
+      auto& value(){return value_;}
+
+
+  __host__ __device__
+      auto& value()const {return value_;}
+
+  __host__ __device__
+      auto& index()const {return i_;}
+
+
+  //__host__ __device__
+  vector_by_index()=default;
+
+  __host__ __device__
+      auto size()const{return value().size();}
+
+  auto byte_size()const {return value().byte_size();}
+
+  template<class...Xs>
+  __host__ __device__
+      decltype(auto) operator()(const Position<Xs...>& p)const { return value()[index()(p)()];}
+
+  template<class...Xs>
+  __host__ __device__
+      decltype(auto) operator()(const Position<Xs...>& p) { return value()[index()(p)()];}
+
+
+  friend
+      __host__ __device__
+      void my_print(const vector_by_index& me)
+  {
+    printf("{");
+    for (auto& e:me.value()) { my_print(e);printf(", ");}
+    printf("}");
+  }
+
+
+
+  friend
+      __host__
+          std::ostream& operator<<(std::ostream& os, const vector_by_index& me)
+  {
+    os<<"{";
+    for (auto& e:me.value()) os<<e<<", ";
+    return os<<"}";
+  }
+
+};
+
+
+
+
+
+
+
+template<class ind_type,class... ind_types>
+class ind_prod: public ind_type,ind_types...
+{
+
+
+public:
+
+
+  __host__ __device__
+      constexpr ind_prod(ind_type i0,ind_types... i):ind_type{i0},ind_types{i}...{}
+
+  __host__ __device__
+      constexpr auto size()const {
+    return (ind_type::size()*...*ind_types::size());
+  }
+
+  template<class Pos>
+  __host__ __device__
+      constexpr auto operator()(const Pos& p)const {
+         return compose(p,static_cast<ind_type&>(*this),static_cast<ind_types&>(*this)...).first;
+  }
+
+
+};
+
+
+
+template<class Id, class... ind_types>
+class ind<ind_prod<ind_types...>,Id>
+{
+
+private:
+  ind_prod<ind_types...> indexes_;
+  vector_device<std::size_t> offset_;
+
+public:
+
+  inline static constexpr auto x_iname=my_static_string("index(");
+  inline static constexpr auto name=x_iname+Id::name+my_static_string(")");
+  using myId=Id;
+
+  __host__ __device__
+      constexpr ind(Id, ind_prod<ind_types...> i):indexes_{i},offset_{i.size()}{}
+
+  __host__ __device__
+      auto size()const{return offset_.size();}
+
+
+  template< class Pos>
+  __host__ __device__
+      auto& operator[](const Pos& p) {return offset_[indexes_(p)()];}
+
+  template<class Pos>
+  __host__ __device__
+      constexpr auto operator()(const Pos& p)const {
+    return std::pair<index_offset_t<ind>, const Pos&>(offset_[indexes_(p).first()]+p[Id{}](),p);
+  }
+
+
+  template<class... Id0,class Pos>
+  __host__ __device__
+      constexpr auto operator()(std::pair<offset<Id0...>, const Pos&> p)const
+  {
+     return std::pair<decltype(offset<Id0...>{}*index_offset_t<ind>{}), const Pos&>(
+        p.first()*size()+(*this)(p.second),
+        p.second);
+  }
+
+
+};
+
+
+
 template<class Id, typename T>
 class x_i
 {
@@ -542,7 +827,9 @@ private:
   T x_;
 
 public:
+
   inline static constexpr auto x_iname=my_static_string("x_i(");
+  inline static constexpr auto name=x_iname+Id::name+my_static_string(")");
   using myId=Id;
 
   __host__ __device__
@@ -604,10 +891,21 @@ x_i(Id,vector_device<T>const &)->x_i<Id,vector_field<T,Id>>;
 
 
 
+
+
+
+
+
+
+
+
 template <class...xs>
 struct mapu: public xs...
 {
   using xs::operator[]...;
+
+  inline static constexpr auto mapu_name=my_static_string("mapu");
+  inline static constexpr auto name=(mapu_name+...+xs::name);
 
   constexpr inline static auto size=sizeof... (xs);
 
@@ -660,7 +958,82 @@ struct quimulun: public xs...
   constexpr quimulun(xs...x):xs{x}...{}
 
   constexpr quimulun(){}
+
+  template<class... xs2>
+  friend auto operator&&(quimulun<xs2...>&& , quimulun&& ){return quimulun<xs2...,xs...>{} ;}
+
 };
+
+template <>
+struct quimulun<>
+{
+  static inline constexpr auto quimulun_name=my_static_string("quimulun(");
+  static inline constexpr auto name=quimulun_name+my_static_string(")");
+  constexpr quimulun(){}
+};
+
+template<class F,class... Args>
+struct Op
+{
+  inline static constexpr auto is_identifier=true;
+  inline static constexpr auto is_operator=true;
+  static constexpr auto name=F::template get_name<Args...>();
+  static constexpr auto get_name(){return name;}
+
+  __host__ __device__ Op(F,Args...){}
+  __host__ __device__ Op(){}
+};
+
+template<class F>
+struct Op<F>
+{
+  inline static constexpr auto is_identifier=true;
+  inline static constexpr auto is_operator=true;
+  static constexpr auto name=F::name;
+  static constexpr auto get_name(){return name;}
+
+  __host__ __device__ Op(F){}
+  __host__ __device__ Op(){}
+};
+
+template<class... Expresions>
+struct sequential_block{
+  inline static constexpr auto my_name=my_static_string("sequential(");
+  inline static constexpr auto name=(my_name+...+(my_static_string("\n")+Expresions::name))+my_static_string(")");
+
+  template<class subExpresion>
+  friend auto operator&&(sequential_block, subExpresion)
+  {
+    return sequential_block<Expresions...,subExpresion>{};
+  }
+
+};
+
+template<class... Expresions>
+struct non_sequential_block{
+  inline static constexpr auto my_name=my_static_string("non_sequential(");
+  inline static constexpr auto name=(my_name+...+(Expresions::name+my_static_string("\t")))+my_static_string(")");
+
+  non_sequential_block(Expresions...){}
+
+  template<typename =std::enable_if_t<(sizeof... (Expresions) >0)>>
+  non_sequential_block(){}
+};
+
+template<class... Expresions>
+constexpr auto variables (sequential_block<Expresions...>)
+{
+  return (variables(Expresions{})&&...&&Variables<>{});
+}
+
+template<class... Expresions>
+constexpr auto variables (non_sequential_block<Expresions...>)
+{
+  return (variables(Expresions{})&&...&&Variables<>{});
+}
+
+
+
 template <class...xs>
 struct Error
 {
@@ -676,6 +1049,13 @@ struct Error
 
   template<class...xs2>
   friend decltype(auto) operator&&(Error,mapu<xs2...>&& out){return std::move(out);}
+
+  template<class x,class... xs2>
+  friend decltype(auto) operator&&(non_sequential_block<x,xs2...>&& out, Error){return std::move(out);}
+
+  template<class...xs2>
+  friend decltype(auto) operator&&(Error,non_sequential_block<xs2...>&& out){return std::move(out);}
+
 
   Error(xs...){}
   Error(){}
@@ -699,19 +1079,22 @@ template <class...xs> struct is_Error<Error<xs...>>:public std::true_type {};
 template<class T> inline constexpr auto is_Error_v=is_Error<std::decay_t<T>>::value;
 
 template<class Id,class T>
-auto variables(x_i<Id,T>) {
+constexpr auto variables(x_i<Id,T>) {
 
   return Variables<Id>{};
 
 }
 
+
+
+
 template <class...xs>
-auto variables(quimulun<xs...>)
+constexpr auto variables(quimulun<xs...>)
 {
   return decltype ((variables(std::declval<xs>())&&...)){};
 }
 template <class...xs>
-auto variables(const mapu<xs...>&)
+constexpr auto variables(const mapu<xs...>&)
 {
   //  using test=typename Cs<xs...,
   //                           decltype ((variables(std::declval<xs>())&&...&&Variables<>{})),
@@ -719,6 +1102,39 @@ auto variables(const mapu<xs...>&)
   return decltype ((variables(std::declval<xs>())&&...&&Variables<>{})){};
 }
 
+template<class Id,class T>
+constexpr auto variables_new(x_i<Id,T>) {
+
+  return Variables<Id>{};
+
+}
+template<class Id>
+constexpr auto variables_new(ind<Id>) {
+
+  return Variables<Id>{};
+
+}
+
+template<class Id, class index_type>
+constexpr auto variables_new(ind<index_type,Id>) {
+
+  return Variables<Id>{};
+
+}
+
+template <class...xs>
+constexpr auto variables_new(quimulun<xs...>)
+{
+  return decltype ((variables_new(std::declval<xs>())&&...)){};
+}
+template <class...xs>
+constexpr auto variables_new(const mapu<xs...>&)
+{
+  //  using test=typename Cs<xs...,
+  //                           decltype ((variables(std::declval<xs>())&&...&&Variables<>{})),
+  //                           decltype (variables(std::declval<xs>()))...>::var;
+  return decltype ((variables_new(std::declval<xs>())&&...&&Variables<>{})){};
+}
 
 
 
@@ -746,6 +1162,8 @@ struct P{
 };
 
 struct Index{
+  inline static constexpr auto name=my_static_string("index");
+
   inline static constexpr auto Index_name=my_static_string("index(");
 
   template<class Max>
@@ -755,6 +1173,29 @@ struct Index{
 
 };
 
+struct Index_new{
+  inline static constexpr auto name=my_static_string("index");
+
+  inline static constexpr auto Index_name=my_static_string("index(");
+
+  template<class... T>
+  inline static constexpr auto get_name(){return Index_name+(T::name+...+my_static_string(")"));}
+  template<class Min,class Max>
+  inline static constexpr auto get_name(){return Index_name+Min::name+my_static_string(",")+Max::name+my_static_string(")");}
+
+};
+
+struct Build_new{
+  inline static constexpr auto name=my_static_string("build");
+  
+  inline static constexpr auto Index_name=my_static_string("build(");
+  
+  template<class... T>
+  inline static constexpr auto get_name(){return Index_name+(T::name+...+my_static_string(")"));}
+  
+};
+
+
 struct DeRef{
   inline static constexpr auto evalname=my_static_string("deref(");
   template<class... X>
@@ -763,10 +1204,27 @@ struct DeRef{
 
 
 struct Eval{
+  inline static constexpr auto name=my_static_string("eval");
   inline static constexpr auto evalname=my_static_string("eval(");
+  template<class... X>
+  inline static constexpr auto get_name(){return ((evalname+...+(X::name+my_static_string(",")))+my_static_string(")"));}
+};
+
+struct Get{
+  inline static constexpr auto name=my_static_string("get");
+  inline static constexpr auto evalname=my_static_string("get(");
   template<class... X>
   inline static constexpr auto get_name(){return ((evalname+...+X::name)+my_static_string(")"));}
 };
+
+
+struct Assign{
+  inline static constexpr auto evalname=my_static_string("assign(");
+  template<class... X>
+  inline static constexpr auto get_name(){return ((evalname+...+(X::name+my_static_string(",")))+my_static_string(")"));}
+};
+
+
 
 struct Reserve{
   inline static constexpr auto evalname=my_static_string("reserve(");
@@ -800,12 +1258,22 @@ struct Size{
 };
 
 
+
 template<class ...Xs> struct span{
-  inline static constexpr auto name=my_static_string("span");
+  inline static constexpr auto span_name=my_static_string("span(");
+  inline static constexpr auto name=(span_name+...+Xs::name)+my_static_string(")");
   static   constexpr auto my_name(){return name;}
 
   span(){}
   static constexpr auto size(){return sizeof... (Xs);}
+};
+
+
+
+
+
+struct self_span{
+  inline static constexpr auto name=my_static_string("");
 };
 
 
@@ -850,37 +1318,41 @@ auto operator*(span<X,Xs...>,span<Y,Ys...>){
     return span<Y>{}&&(span<X,Xs...>{}*span<Ys...>{});
 }
 
+template <class X,class... Xs, class Id
+          // ,typename =std::enable_if_t<is_sorted<X,Xs...>()>
+          >
+auto operator*(span<X,Xs...>,Id){
+  if constexpr (std::is_same_v<self_span,X >)
+  return span<Xs...>{}*span<Id>{};
+  else return span<X,Xs...>{};
+}
+
+template <class Id>
+auto operator* (span<>, Id){return span<>{};}
+
+
 
 
 struct D{};
 
 
 
-template<class F,class... Args>
-struct Op
+
+
+template <class...xs>
+constexpr auto variables( Data<xs...>)
 {
-  inline static constexpr auto is_identifier=true;
-  inline static constexpr auto is_operator=true;
-  static constexpr auto name=F::template get_name<Args...>();
-  static constexpr auto get_name(){return name;}
-
-  __host__ __device__ Op(F,Args...){}
-  __host__ __device__ Op(){}
-};
-
-template<class F>
-struct Op<F>
-{
-  inline static constexpr auto is_identifier=true;
-  inline static constexpr auto is_operator=true;
-  static constexpr auto name=F::name;
-  static constexpr auto get_name(){return name;}
-
-  __host__ __device__ Op(F){}
-  __host__ __device__ Op(){}
-};
+  //  using test=typename Cs<xs...,
+  //                           decltype ((variables(std::declval<xs>())&&...&&Variables<>{})),
+  //                           decltype (variables(std::declval<xs>()))...>::var;
+  return decltype ((variables(std::declval<xs>())&&...&&Variables<>{})){};
+}
 
 
+
+/**
+ *  n->(
+ */
 template <class Max>
 auto index(Max n)
 {
@@ -904,6 +1376,27 @@ auto index(Min,Max)
 {
   return Op<Index,Min,Max>{};
 }
+
+
+
+template <class Id, class Max>
+auto index_new(Id, Max n)
+{
+  if constexpr (std::is_integral_v<std::decay_t<Max>>)
+  {
+    return ind(Id{},n);
+  }
+  else
+  {
+    return Op<Index_new,Id,Max>{};
+  }
+}
+
+
+
+
+
+
 
 
 template<class X, class Y, typename=std::enable_if_t<X::is_identifier&&Y::is_identifier>>
@@ -955,8 +1448,37 @@ public:
   constexpr F(){}
 };
 
+
 template<class Id,class G>
-auto variables(F<Id,G>) {return Variables<Id>{};}
+class  I_new
+{
+public:
+  typedef   Id myId;
+
+  inline static constexpr auto name=Id::name+my_static_string("=")+G::name;
+  auto &operator[](Id)const {return *this;}
+  static   constexpr auto my_name(){return name;}
+
+  constexpr I_new(Id ,G&& ){}
+  constexpr I_new(){}
+};
+
+
+template<class Id,class G>
+constexpr auto variables(F<Id,G>) {return Variables<Id>{};}
+
+
+template<class Id,class G>
+constexpr auto variables_new(F<Id,G>) {return Variables<Id>{};}
+
+template<class Id,class G>
+constexpr auto variables_new(I_new<Id,G>) {return Variables<Id>{};}
+
+
+
+
+template<class Id,class... G>
+constexpr auto variables(Op<Assign,Id,G...>) {return Variables<Id>{};}
 
 
 template<class Eval,class S, class... X>
@@ -995,6 +1517,13 @@ struct device_gpu;
 
 
 
+struct global_gpu{
+  inline static constexpr auto num_threads=100;
+
+
+};
+struct device_gpu{};
+struct gpu{};
 
 
 
